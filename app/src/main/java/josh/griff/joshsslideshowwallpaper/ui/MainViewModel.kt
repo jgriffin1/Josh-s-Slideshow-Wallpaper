@@ -95,6 +95,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun setWallpaperAtIndex(index: Int) {
+        val uris = imageUris.value
+        if (index !in uris.indices) return
+
+        _isUpdatingWallpaper.value = true
+        viewModelScope.launch {
+            val success = withContext(Dispatchers.IO) {
+                WallpaperHelper.setWallpaperFromUri(getApplication(), uris[index])
+            }
+
+            if (success) {
+                dataStoreManager.updateIndex(index)
+            }
+
+            delay(500)
+            _isUpdatingWallpaper.value = false
+        }
+    }
+
     fun toggleSlideshow(enabled: Boolean) {
         viewModelScope.launch {
             dataStoreManager.saveSlideshowEnabled(enabled)

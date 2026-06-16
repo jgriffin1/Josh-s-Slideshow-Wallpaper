@@ -7,36 +7,25 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.util.Log
 import java.io.InputStream
+import kotlin.math.max
 
 object WallpaperHelper {
     private const val TAG = "WallpaperHelper"
 
     /**
-     * Sets the wallpaper from a URI. 
-     * Includes a fallback mechanism to decode and set as bitmap if direct stream fails,
-     * which can be more reliable on some devices.
+     * Sets the wallpaper from a URI with smart downsampling.
      */
     fun setWallpaperFromUri(context: Context, uriString: String): Boolean {
         return try {
             val uri = Uri.parse(uriString)
             val wallpaperManager = WallpaperManager.getInstance(context)
             
-            // Try setting as stream first (most efficient)
-            val inputStream: InputStream? = context.contentResolver.openInputStream(uri)
-            if (inputStream != null) {
-                try {
-                    wallpaperManager.setStream(inputStream)
-                    return true
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to set wallpaper via stream, trying bitmap", e)
-                } finally {
-                    inputStream.close()
-                }
-            }
+            // Get screen dimensions to avoid loading massive bitmaps
+            val displayMetrics = context.resources.displayMetrics
+            val reqWidth = displayMetrics.widthPixels
+            val reqHeight = displayMetrics.heightPixels
 
-            // Fallback: Decode to bitmap and set
-            // This is sometimes needed if the stream is incompatible or for better scaling
-            val bitmap = decodeSampledBitmapFromUri(context, uri)
+            val bitmap = decodeSampledBitmapFromUri(context, uri, reqWidth, reqHeight)
             if (bitmap != null) {
                 wallpaperManager.setBitmap(bitmap)
                 return true
@@ -49,15 +38,45 @@ object WallpaperHelper {
         }
     }
 
-    private fun decodeSampledBitmapFromUri(context: Context, uri: Uri): Bitmap? {
+    private fun decodeSampledBitmapFromUri(context: Context, uri: Uri, reqWidth: Int, reqHeight: Int): Bitmap? {
         return try {
-            val inputStream = context.contentResolver.openInputStream(uri) ?: return null
-            val bitmap = BitmapFactory.decodeStream(inputStream)
-            inputStream.close()
+            val options = BitmapFactory.Options().apply {
+                inJustDecodeBounds = true
+            }
+            
+            // First decode with inJustDecodeBounds=true to check dimensions
+            var inputStream = context.contentResolver.openInputStream(uri)
+            BitmapFactory.decodeStream(inputStream, null, options)
+            inputStream?.close()
+
+            // Calculate inSampleSize
+            options.inSampleSize = calculateInSampleSize(options, reqWidth, reqHeight)
+
+            // Decode bitmap with inSampleSize set
+            options.inJustDecodeBounds = false
+            inputStream = context.contentResolver.openInputStream(uri)
+            val bitmap = BitmapFactory.decodeStream(inputStream, null, options)
+            inputStream?.close()
+            
             bitmap
         } catch (e: Exception) {
             Log.e(TAG, "Error decoding bitmap", e)
             null
         }
+    }
+
+    private fun calculateInSampleSize(options: BitmapFactory.Options, reqWidth: Int, reqHeight: Int): Int {
+        val (height: Int, width: Int) = options.outHeight to options.outWidth
+        var inSampleSize = 1
+
+        if (height > reqHeight || width > reqWidth) {
+            val halfHeight: Int = height / 2
+            val halfWidth: Int = width / 2
+
+            while (halfHeight / inSampleSize >= reqHeight && halfWidth / inSampleSize >= reqWidth) {
+                inSampleSize *= 2
+            }
+        }
+        return inSampleSize
     }
 }

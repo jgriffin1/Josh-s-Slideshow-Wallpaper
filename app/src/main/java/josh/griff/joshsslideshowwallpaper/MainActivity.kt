@@ -44,6 +44,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import josh.griff.joshsslideshowwallpaper.ui.MainViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -449,7 +450,10 @@ fun WallpaperApp(viewModel: MainViewModel = viewModel()) {
                                             .clickable { previewIndex = currentIndex }
                                     ) {
                                         AsyncImage(
-                                            model = imageUris[currentIndex],
+                                            model = ImageRequest.Builder(LocalContext.current)
+                                                .data(imageUris[currentIndex])
+                                                .crossfade(true)
+                                                .build(),
                                             contentDescription = "Current wallpaper",
                                             modifier = Modifier.fillMaxSize(),
                                             contentScale = ContentScale.Crop
@@ -515,13 +519,17 @@ fun WallpaperApp(viewModel: MainViewModel = viewModel()) {
                 }
 
                 // Gallery Items
-                itemsIndexed(imageUris) { index, uri ->
+                itemsIndexed(
+                    items = imageUris,
+                    key = { _, uri -> uri } // Smarter Rendering: Added keys for stable item positioning
+                ) { index, uri ->
                     val isCurrent = index == currentIndex
                     val isSelected = selectedUris.contains(uri)
                     
                     Box(
                         modifier = Modifier
                             .aspectRatio(1f)
+                            .animateItemPlacement() // Smarter Rendering: Smoothly animate moves/deletions
                             .clip(RoundedCornerShape(16.dp))
                             .background(
                                 if (isSelected) MaterialTheme.colorScheme.primaryContainer
@@ -541,7 +549,10 @@ fun WallpaperApp(viewModel: MainViewModel = viewModel()) {
                             .clip(RoundedCornerShape(12.dp))
                     ) {
                         AsyncImage(
-                            model = uri,
+                            model = ImageRequest.Builder(LocalContext.current)
+                                .data(uri)
+                                .crossfade(true) // Smooth Image Transitions: Enabled crossfade
+                                .build(),
                             contentDescription = null,
                             modifier = Modifier
                                 .fillMaxSize()
@@ -692,7 +703,10 @@ fun WallpaperApp(viewModel: MainViewModel = viewModel()) {
                             contentAlignment = Alignment.Center
                         ) {
                             AsyncImage(
-                                model = imageUris[page],
+                                model = ImageRequest.Builder(LocalContext.current)
+                                    .data(imageUris[page])
+                                    .crossfade(true)
+                                    .build(),
                                 contentDescription = "Full preview",
                                 modifier = Modifier
                                     .fillMaxSize()
@@ -725,6 +739,22 @@ fun WallpaperApp(viewModel: MainViewModel = viewModel()) {
                         }
 
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            // Set as wallpaper button
+                            IconButton(
+                                onClick = {
+                                    showSuccessToast = true
+                                    viewModel.setWallpaperAtIndex(pagerState.currentPage)
+                                    previewIndex = null
+                                },
+                                modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), CircleShape)
+                            ) {
+                                Icon(
+                                    Icons.Default.Check,
+                                    contentDescription = "Set as wallpaper",
+                                    tint = Color.White
+                                )
+                            }
+
                             // Delete button
                             IconButton(
                                 onClick = {
