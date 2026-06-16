@@ -9,12 +9,8 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.*
 import androidx.compose.animation.core.spring
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -138,6 +134,12 @@ fun WallpaperApp(viewModel: MainViewModel = viewModel()) {
         }
     )
 
+    val gridState = rememberLazyGridState()
+    val coroutineScope = rememberCoroutineScope()
+    val showScrollToTop by remember {
+        derivedStateOf { gridState.firstVisibleItemIndex > 5 }
+    }
+
     BackHandler(enabled = isSelectionMode || previewIndex != null) {
         if (previewIndex != null) {
             previewIndex = null
@@ -198,7 +200,12 @@ fun WallpaperApp(viewModel: MainViewModel = viewModel()) {
                 )
             }
         ) { innerPadding ->
-            Column(
+            val gridUris = imageUris // Local copy for pointerInput capture
+            var dragStartIndex by remember { mutableStateOf<Int?>(null) }
+
+            LazyVerticalGrid(
+                state = gridState,
+                columns = GridCells.Fixed(3),
                 modifier = Modifier
                     .padding(innerPadding)
                     .fillMaxSize()
@@ -210,317 +217,399 @@ fun WallpaperApp(viewModel: MainViewModel = viewModel()) {
                             )
                         )
                     )
-                    .padding(horizontal = 20.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                    .pointerInput(gridUris) {
+                        detectDragGesturesAfterLongPress(
+                            onDragStart = { offset ->
+                                gridState.layoutInfo.visibleItemsInfo
+                                    .find { item ->
+                                        offset.y.toInt() in item.offset.y..(item.offset.y + item.size.height) &&
+                                                offset.x.toInt() in item.offset.x..(item.offset.x + item.size.width)
+                                    }
+                                    ?.let { 
+                                        if (it.index >= 1 && (it.index - 1) < gridUris.size) {
+                                            dragStartIndex = it.index - 1
+                                            initialSelectionDuringDrag = selectedUris
+                                            selectedUris = selectedUris + gridUris[dragStartIndex!!]
+                                        }
+                                    }
+                            },
+                            onDrag = { change, _ ->
+                                dragStartIndex?.let { start ->
+                                    gridState.layoutInfo.visibleItemsInfo
+                                        .find { item ->
+                                            change.position.y.toInt() in item.offset.y..(item.offset.y + item.size.height) &&
+                                                    change.position.x.toInt() in item.offset.x..(item.offset.x + item.size.width)
+                                        }
+                                        ?.let { endItem ->
+                                            val end = endItem.index - 1
+                                            if (end >= 0 && end < gridUris.size) {
+                                                val range = min(start, end)..max(start, end)
+                                                val urisInRange = range.map { gridUris[it] }.toSet()
+                                                selectedUris = initialSelectionDuringDrag + urisInRange
+                                            }
+                                        }
+                                }
+                            },
+                            onDragEnd = { dragStartIndex = null },
+                            onDragCancel = { dragStartIndex = null }
+                        )
+                    },
+                contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 32.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Spacer(modifier = Modifier.height(8.dp))
+                // Settings and Hero Section
+                item(span = { GridItemSpan(3) }) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Spacer(modifier = Modifier.height(8.dp))
 
-                // Main Action Buttons
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    LargeActionButton(
-                        text = "Pick Photos",
-                        icon = Icons.Default.Add,
-                        onClick = {
-                            launcher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-                        },
-                        modifier = Modifier.weight(1f),
-                        containerColor = MaterialTheme.colorScheme.primaryContainer,
-                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
-
-                    LargeActionButton(
-                        text = "Next One",
-                        icon = Icons.Default.Refresh,
-                        onClick = { 
-                            showSuccessToast = true
-                            viewModel.nextWallpaper()
-                        },
-                        modifier = Modifier.weight(1f),
-                        enabled = imageUris.isNotEmpty() && !isSelectionMode,
-                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(24.dp))
-
-                // Slideshow Settings Card
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(28.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(1.dp)
-                    )
-                ) {
-                    Column(modifier = Modifier.padding(24.dp)) {
+                        // Main Action Buttons
                         Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            Surface(
-                                shape = RoundedCornerShape(12.dp),
-                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
-                                modifier = Modifier.size(40.dp)
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        Icons.Default.PlayArrow,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(24.dp)
-                                    )
-                                }
-                            }
-                            Spacer(modifier = Modifier.width(16.dp))
-                            Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    "Automatic Cycle",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.SemiBold,
-                                )
-                                var showHelp by remember { mutableStateOf(false) }
-                                IconButton(onClick = { showHelp = true }, modifier = Modifier.size(32.dp)) {
-                                    Icon(
-                                        Icons.Default.Info, 
-                                        contentDescription = "Help", 
-                                        modifier = Modifier.size(18.dp),
-                                        tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
-                                    )
-                                }
-                                if (showHelp) {
-                                    AlertDialog(
-                                        onDismissRequest = { showHelp = false },
-                                        title = { Text("Automatic Cycle") },
-                                        text = { Text("This is the main magic switch! Turn it on to have your wallpaper automatically cycle through your gallery.") },
-                                        confirmButton = {
-                                            TextButton(onClick = { showHelp = false }) { Text("Got it") }
-                                        }
-                                    )
-                                }
-                            }
-                            Switch(
-                                checked = isSlideshowEnabled,
-                                onCheckedChange = { viewModel.toggleSlideshow(it) },
-                                enabled = imageUris.isNotEmpty()
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(20.dp))
-
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(
-                                "Shuffle photos",
-                                style = MaterialTheme.typography.bodyLarge,
-                                modifier = Modifier.weight(1f)
-                            )
-                            Checkbox(
-                                checked = isRandom,
-                                onCheckedChange = { viewModel.toggleRandom(it) }
-                            )
-                        }
-
-                        HorizontalDivider(
-                            modifier = Modifier.padding(vertical = 16.dp),
-                            color = MaterialTheme.colorScheme.outlineVariant
-                        )
-
-                        // Interval Selector
-                        var expanded by remember { mutableStateOf(false) }
-                        val intervals = listOf(15, 30, 60, 360, 1440)
-                        val labels = listOf("15 mins", "30 mins", "1 hour", "6 hours", "Daily")
-                        val currentLabel = labels[intervals.indexOf(intervalMinutes).let { if (it == -1) 2 else it }]
-
-                        Box(modifier = Modifier.fillMaxWidth()) {
-                            Button(
-                                onClick = { expanded = true },
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(16.dp),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            ) {
-                                Text("Update interval: $currentLabel")
-                            }
-                            DropdownMenu(
-                                expanded = expanded,
-                                onDismissRequest = { expanded = false },
-                                modifier = Modifier
-                                    .fillMaxWidth(0.8f)
-                                    .background(MaterialTheme.colorScheme.surface)
-                            ) {
-                                intervals.forEachIndexed { index, min ->
-                                    DropdownMenuItem(
-                                        text = { Text(labels[index]) },
-                                        onClick = {
-                                            viewModel.setInterval(min)
-                                            expanded = false
-                                        }
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(32.dp))
-
-                // Gallery Header
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.Bottom,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(
-                        "Your Gallery",
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.ExtraBold
-                    )
-                    Text(
-                        text = "${imageUris.size} photos",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                if (imageUris.isEmpty()) {
-                    EmptyState()
-                } else {
-                    val gridState = rememberLazyGridState()
-                    var dragStartIndex by remember { mutableStateOf<Int?>(null) }
-                    
-                    AnimatedVisibility(
-                        visible = true,
-                        enter = fadeIn() + slideInVertically(
-                            initialOffsetY = { 40 },
-                            animationSpec = spring(dampingRatio = 0.8f)
-                        )
-                    ) {
-                        LazyVerticalGrid(
-                            state = gridState,
-                            columns = GridCells.Fixed(3),
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .pointerInput(imageUris) {
-                                    detectDragGesturesAfterLongPress(
-                                        onDragStart = { offset ->
-                                            gridState.layoutInfo.visibleItemsInfo
-                                                .find { item ->
-                                                    offset.y.toInt() in item.offset.y..(item.offset.y + item.size.height) &&
-                                                            offset.x.toInt() in item.offset.x..(item.offset.x + item.size.width)
-                                                }
-                                                ?.let { 
-                                                    if (it.index < imageUris.size) {
-                                                        dragStartIndex = it.index
-                                                        initialSelectionDuringDrag = selectedUris
-                                                        selectedUris = selectedUris + imageUris[it.index]
-                                                    }
-                                                }
-                                        },
-                                        onDrag = { change, _ ->
-                                            dragStartIndex?.let { start ->
-                                                gridState.layoutInfo.visibleItemsInfo
-                                                    .find { item ->
-                                                        change.position.y.toInt() in item.offset.y..(item.offset.y + item.size.height) &&
-                                                                change.position.x.toInt() in item.offset.x..(item.offset.x + item.size.width)
-                                                    }
-                                                    ?.let { endItem ->
-                                                        val end = endItem.index
-                                                        if (end < imageUris.size) {
-                                                            val range = min(start, end)..max(start, end)
-                                                            val urisInRange = range.map { imageUris[it] }.toSet()
-                                                            selectedUris = initialSelectionDuringDrag + urisInRange
-                                                        }
-                                                    }
-                                            }
-                                        },
-                                        onDragEnd = { dragStartIndex = null },
-                                        onDragCancel = { dragStartIndex = null }
-                                    )
+                            LargeActionButton(
+                                text = "Pick Photos",
+                                icon = Icons.Default.Add,
+                                onClick = {
+                                    launcher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                                 },
-                            contentPadding = PaddingValues(bottom = 32.dp),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                                modifier = Modifier.weight(1f),
+                                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+
+                            LargeActionButton(
+                                text = "Next One",
+                                icon = Icons.Default.Refresh,
+                                onClick = { 
+                                    showSuccessToast = true
+                                    viewModel.nextWallpaper()
+                                },
+                                modifier = Modifier.weight(1f),
+                                enabled = imageUris.isNotEmpty() && !isSelectionMode,
+                                containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        // Slideshow Settings Card
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(28.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(1.dp)
+                            )
                         ) {
-                            itemsIndexed(imageUris) { index, uri ->
-                                val isCurrent = index == currentIndex
-                                val isSelected = selectedUris.contains(uri)
-                                
-                                Box(
-                                    modifier = Modifier
-                                        .aspectRatio(1f)
-                                        .clip(RoundedCornerShape(16.dp))
-                                        .background(
-                                            if (isSelected) MaterialTheme.colorScheme.primaryContainer
-                                            else if (isCurrent) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
-                                            else Color.Transparent
-                                        )
-                                        .combinedClickable(
-                                            onClick = {
-                                                if (isSelectionMode) {
-                                                    if (isSelected) selectedUris -= uri else selectedUris += uri
-                                                } else {
-                                                    previewIndex = index
-                                                }
-                                            }
-                                        )
-                                        .padding(if (isSelected || isCurrent) 4.dp else 0.dp)
-                                        .clip(RoundedCornerShape(12.dp))
+                            Column(modifier = Modifier.padding(24.dp)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    AsyncImage(
-                                        model = uri,
-                                        contentDescription = null,
-                                        modifier = Modifier
-                                            .fillMaxSize()
-                                            .background(MaterialTheme.colorScheme.surfaceVariant),
-                                        contentScale = ContentScale.Crop
-                                    )
-                                    
-                                    if (isSelected) {
-                                        Box(
-                                            modifier = Modifier
-                                                .fillMaxSize()
-                                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)),
-                                            contentAlignment = Alignment.Center
-                                        ) {
+                                    Surface(
+                                        shape = RoundedCornerShape(12.dp),
+                                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
+                                        modifier = Modifier.size(40.dp)
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
                                             Icon(
-                                                Icons.Default.CheckCircle,
+                                                Icons.Default.PlayArrow,
                                                 contentDescription = null,
-                                                tint = Color.White,
-                                                modifier = Modifier.size(32.dp)
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(24.dp)
                                             )
                                         }
-                                    } else if (isCurrent) {
-                                        Surface(
-                                            color = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier
-                                                .align(Alignment.TopEnd)
-                                                .padding(4.dp)
-                                                .size(20.dp),
-                                            shape = CircleShape
-                                        ) {
+                                    }
+                                    Spacer(modifier = Modifier.width(16.dp))
+                                    Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            "Automatic Cycle",
+                                            style = MaterialTheme.typography.titleMedium,
+                                            fontWeight = FontWeight.SemiBold,
+                                        )
+                                        var showHelp by remember { mutableStateOf(false) }
+                                        IconButton(onClick = { showHelp = true }, modifier = Modifier.size(32.dp)) {
                                             Icon(
-                                                Icons.Default.Refresh,
-                                                contentDescription = null,
-                                                tint = MaterialTheme.colorScheme.onPrimary,
-                                                modifier = Modifier.padding(4.dp)
+                                                Icons.Default.Info, 
+                                                contentDescription = "Help", 
+                                                modifier = Modifier.size(18.dp),
+                                                tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+                                            )
+                                        }
+                                        if (showHelp) {
+                                            AlertDialog(
+                                                onDismissRequest = { showHelp = false },
+                                                title = { Text("Automatic Cycle") },
+                                                text = { Text("This is the main magic switch! Turn it on to have your wallpaper automatically cycle through your gallery.") },
+                                                confirmButton = {
+                                                    TextButton(onClick = { showHelp = false }) { Text("Got it") }
+                                                }
+                                            )
+                                        }
+                                    }
+                                    Switch(
+                                        checked = isSlideshowEnabled,
+                                        onCheckedChange = { viewModel.toggleSlideshow(it) },
+                                        enabled = imageUris.isNotEmpty()
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.height(20.dp))
+
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(
+                                        "Shuffle photos",
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    Checkbox(
+                                        checked = isRandom,
+                                        onCheckedChange = { viewModel.toggleRandom(it) }
+                                    )
+                                }
+
+                                HorizontalDivider(
+                                    modifier = Modifier.padding(vertical = 16.dp),
+                                    color = MaterialTheme.colorScheme.outlineVariant
+                                )
+
+                                // Interval Selector
+                                var expanded by remember { mutableStateOf(false) }
+                                val intervals = listOf(15, 30, 60, 360, 1440)
+                                val labels = listOf("15 mins", "30 mins", "1 hour", "6 hours", "Daily")
+                                val currentLabel = labels[intervals.indexOf(intervalMinutes).let { if (it == -1) 2 else it }]
+
+                                Box(modifier = Modifier.fillMaxWidth()) {
+                                    Button(
+                                        onClick = { expanded = true },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        shape = RoundedCornerShape(16.dp),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                                            contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    ) {
+                                        Text("Update interval: $currentLabel")
+                                    }
+                                    DropdownMenu(
+                                        expanded = expanded,
+                                        onDismissRequest = { expanded = false },
+                                        modifier = Modifier
+                                            .fillMaxWidth(0.8f)
+                                            .background(MaterialTheme.colorScheme.surface)
+                                    ) {
+                                        intervals.forEachIndexed { index, min ->
+                                            DropdownMenuItem(
+                                                text = { Text(labels[index]) },
+                                                onClick = {
+                                                    viewModel.setInterval(min)
+                                                    expanded = false
+                                                }
                                             )
                                         }
                                     }
                                 }
                             }
                         }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        // Current Displayed Photo Section
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(28.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(2.dp)
+                            )
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(16.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(
+                                    "Current Wallpaper",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(modifier = Modifier.height(12.dp))
+                                
+                                if (imageUris.isNotEmpty() && currentIndex in imageUris.indices) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(200.dp)
+                                            .clip(RoundedCornerShape(20.dp))
+                                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                                            .clickable { previewIndex = currentIndex }
+                                    ) {
+                                        AsyncImage(
+                                            model = imageUris[currentIndex],
+                                            contentDescription = "Current wallpaper",
+                                            modifier = Modifier.fillMaxSize(),
+                                            contentScale = ContentScale.Crop
+                                        )
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .background(
+                                                    Brush.verticalGradient(
+                                                        listOf(Color.Transparent, Color.Black.copy(alpha = 0.3f))
+                                                    )
+                                                )
+                                        )
+                                        Icon(
+                                            Icons.Default.Search,
+                                            contentDescription = null,
+                                            tint = Color.White,
+                                            modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp)
+                                        )
+                                    }
+                                } else {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(120.dp)
+                                            .clip(RoundedCornerShape(20.dp))
+                                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.05f)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            "Add photos to get started! ✨",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(32.dp))
+
+                        // Gallery Header
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.Bottom,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                "Your Gallery",
+                                style = MaterialTheme.typography.headlineSmall,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                            Text(
+                                text = "${imageUris.size} photos",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
                     }
                 }
+
+                // Gallery Items
+                itemsIndexed(imageUris) { index, uri ->
+                    val isCurrent = index == currentIndex
+                    val isSelected = selectedUris.contains(uri)
+                    
+                    Box(
+                        modifier = Modifier
+                            .aspectRatio(1f)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(
+                                if (isSelected) MaterialTheme.colorScheme.primaryContainer
+                                else if (isCurrent) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
+                                else Color.Transparent
+                            )
+                            .combinedClickable(
+                                onClick = {
+                                    if (isSelectionMode) {
+                                        if (isSelected) selectedUris -= uri else selectedUris += uri
+                                    } else {
+                                        previewIndex = index
+                                    }
+                                }
+                            )
+                            .padding(if (isSelected || isCurrent) 4.dp else 0.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                    ) {
+                        AsyncImage(
+                            model = uri,
+                            contentDescription = null,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(MaterialTheme.colorScheme.surfaceVariant),
+                            contentScale = ContentScale.Crop
+                        )
+                        
+                        if (isSelected) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    Icons.Default.CheckCircle,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(32.dp)
+                                )
+                            }
+                        } else if (isCurrent) {
+                            Surface(
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .padding(4.dp)
+                                    .size(20.dp),
+                                shape = CircleShape
+                            ) {
+                                Icon(
+                                    Icons.Default.Refresh,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onPrimary,
+                                    modifier = Modifier.padding(4.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+                
+                if (imageUris.isEmpty()) {
+                    item(span = { GridItemSpan(3) }) {
+                        EmptyState()
+                    }
+                }
+            }
+        }
+
+        // Return to Top FAB
+        AnimatedVisibility(
+            visible = showScrollToTop,
+            enter = fadeIn() + slideInVertically(initialOffsetY = { 100 }),
+            exit = fadeOut() + slideOutVertically(targetOffsetY = { 100 }),
+            modifier = Modifier.align(Alignment.BottomEnd).padding(24.dp)
+        ) {
+            FloatingActionButton(
+                onClick = {
+                    coroutineScope.launch {
+                        gridState.animateScrollToItem(0)
+                    }
+                },
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary,
+                shape = CircleShape,
+                elevation = FloatingActionButtonDefaults.elevation(8.dp)
+            ) {
+                Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Scroll to top")
             }
         }
 
@@ -562,7 +651,7 @@ fun WallpaperApp(viewModel: MainViewModel = viewModel()) {
                             tint = MaterialTheme.colorScheme.primary
                         )
                         Text(
-                            "Wallpaper Updated!",
+                            "Success!",
                             style = MaterialTheme.typography.labelLarge,
                             fontWeight = FontWeight.Bold
                         )
@@ -570,96 +659,101 @@ fun WallpaperApp(viewModel: MainViewModel = viewModel()) {
                 }
             }
         }
-    }
-    
-    // Photo Preview Overlay
-    if (previewIndex != null && imageUris.isNotEmpty()) {
-        val pagerState = rememberPagerState(
-            initialPage = previewIndex!!,
-            pageCount = { imageUris.size }
-        )
 
-        Dialog(
-            onDismissRequest = { previewIndex = null },
-            properties = DialogProperties(usePlatformDefaultWidth = false)
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black)
+        // Photo Preview Overlay
+        if (previewIndex != null && imageUris.isNotEmpty()) {
+            val pagerState = rememberPagerState(
+                initialPage = previewIndex ?: 0,
+                pageCount = { imageUris.size }
+            )
+
+            // Re-sync pager if previewIndex changes while open (e.g. from hero)
+            LaunchedEffect(previewIndex) {
+                previewIndex?.let { pagerState.scrollToPage(it) }
+            }
+
+            Dialog(
+                onDismissRequest = { previewIndex = null },
+                properties = DialogProperties(usePlatformDefaultWidth = false)
             ) {
-                HorizontalPager(
-                    state = pagerState,
-                    modifier = Modifier.fillMaxSize(),
-                    pageSpacing = 16.dp,
-                    contentPadding = PaddingValues(horizontal = 0.dp)
-                ) { page ->
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        AsyncImage(
-                            model = imageUris[page],
-                            contentDescription = "Full preview",
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .clickable { previewIndex = null },
-                            contentScale = ContentScale.Fit
-                        )
-                    }
-                }
-
-                // Top Controls
-                Row(
+                Box(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .statusBarsPadding()
-                        .padding(16.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                        .fillMaxSize()
+                        .background(Color.Black)
                 ) {
-                    // Photo counter
-                    Surface(
-                        color = Color.Black.copy(alpha = 0.4f),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Text(
-                            text = "${pagerState.currentPage + 1} / ${imageUris.size}",
-                            color = Color.White,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                            style = MaterialTheme.typography.labelLarge
-                        )
+                    HorizontalPager(
+                        state = pagerState,
+                        modifier = Modifier.fillMaxSize(),
+                        pageSpacing = 16.dp,
+                        contentPadding = PaddingValues(horizontal = 0.dp)
+                    ) { page ->
+                        Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            AsyncImage(
+                                model = imageUris[page],
+                                contentDescription = "Full preview",
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .clickable { previewIndex = null },
+                                contentScale = ContentScale.Fit
+                            )
+                        }
                     }
 
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        // Delete button
-                        IconButton(
-                            onClick = {
-                                val uriToDelete = imageUris[pagerState.currentPage]
-                                viewModel.removeImages(listOf(uriToDelete))
-                                if (imageUris.size <= 1) {
-                                    previewIndex = null
-                                }
-                            },
-                            modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), CircleShape)
+                    // Top Controls
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .statusBarsPadding()
+                            .padding(16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Photo counter
+                        Surface(
+                            color = Color.Black.copy(alpha = 0.4f),
+                            shape = RoundedCornerShape(12.dp)
                         ) {
-                            Icon(
-                                Icons.Default.Delete,
-                                contentDescription = "Delete photo",
-                                tint = Color.White
+                            Text(
+                                text = "${pagerState.currentPage + 1} / ${imageUris.size}",
+                                color = Color.White,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                style = MaterialTheme.typography.labelLarge
                             )
                         }
 
-                        // Close button
-                        IconButton(
-                            onClick = { previewIndex = null },
-                            modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), CircleShape)
-                        ) {
-                            Icon(
-                                Icons.Default.Close,
-                                contentDescription = "Close preview",
-                                tint = Color.White
-                            )
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            // Delete button
+                            IconButton(
+                                onClick = {
+                                    val uriToDelete = imageUris[pagerState.currentPage]
+                                    viewModel.removeImages(listOf(uriToDelete))
+                                    if (imageUris.size <= 1) {
+                                        previewIndex = null
+                                    }
+                                },
+                                modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), CircleShape)
+                            ) {
+                                Icon(
+                                    Icons.Default.Delete,
+                                    contentDescription = "Delete photo",
+                                    tint = Color.White
+                                )
+                            }
+
+                            // Close button
+                            IconButton(
+                                onClick = { previewIndex = null },
+                                modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), CircleShape)
+                            ) {
+                                Icon(
+                                    Icons.Default.Close,
+                                    contentDescription = "Close preview",
+                                    tint = Color.White
+                                )
+                            }
                         }
                     }
                 }
@@ -673,7 +767,7 @@ fun EmptyState() {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .padding(bottom = 64.dp),
+            .padding(vertical = 64.dp),
         contentAlignment = Alignment.Center
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
