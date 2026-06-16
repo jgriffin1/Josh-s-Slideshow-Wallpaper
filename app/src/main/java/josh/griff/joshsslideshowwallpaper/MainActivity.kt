@@ -3,6 +3,7 @@ package josh.griff.joshsslideshowwallpaper
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -11,23 +12,28 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -37,6 +43,8 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import josh.griff.joshsslideshowwallpaper.ui.MainViewModel
+import kotlin.math.max
+import kotlin.math.min
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -85,7 +93,7 @@ fun JoshsTheme(
     )
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun WallpaperApp(viewModel: MainViewModel = viewModel()) {
     val imageUris by viewModel.imageUris.collectAsState()
@@ -93,6 +101,10 @@ fun WallpaperApp(viewModel: MainViewModel = viewModel()) {
     val isSlideshowEnabled by viewModel.isSlideshowEnabled.collectAsState()
     val intervalMinutes by viewModel.intervalMinutes.collectAsState()
     val isRandom by viewModel.isRandom.collectAsState()
+
+    var selectedUris by remember { mutableStateOf(setOf<String>()) }
+    var initialSelectionDuringDrag by remember { mutableStateOf(setOf<String>()) }
+    val isSelectionMode = selectedUris.isNotEmpty()
 
     val launcher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickMultipleVisualMedia(),
@@ -103,19 +115,57 @@ fun WallpaperApp(viewModel: MainViewModel = viewModel()) {
         }
     )
 
+    BackHandler(enabled = isSelectionMode) {
+        selectedUris = emptySet()
+    }
+
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         topBar = {
-            LargeTopAppBar(
+            TopAppBar(
                 title = {
-                    Text(
-                        "Josh's Slideshow",
-                        fontWeight = FontWeight.Bold
-                    )
+                    if (isSelectionMode) {
+                        Text("${selectedUris.size} selected")
+                    } else {
+                        Text("JoshSlides", fontWeight = FontWeight.Bold)
+                    }
                 },
-                colors = TopAppBarDefaults.largeTopAppBarColors(
-                    containerColor = Color.Transparent,
-                    scrolledContainerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(3.dp)
+                navigationIcon = {
+                    if (isSelectionMode) {
+                        IconButton(onClick = { selectedUris = emptySet() }) {
+                            Icon(Icons.Default.Close, contentDescription = "Clear selection")
+                        }
+                    }
+                },
+                actions = {
+                    if (isSelectionMode) {
+                        IconButton(onClick = {
+                            viewModel.removeImages(selectedUris.toList())
+                            selectedUris = emptySet()
+                        }) {
+                            Icon(Icons.Default.Delete, contentDescription = "Delete selected")
+                        }
+                    } else if (imageUris.isNotEmpty()) {
+                        var showMenu by remember { mutableStateOf(false) }
+                        Box {
+                            IconButton(onClick = { showMenu = true }) {
+                                Icon(Icons.Default.MoreVert, contentDescription = "More")
+                            }
+                            DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                                DropdownMenuItem(
+                                    text = { Text("Remove all photos") },
+                                    leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null) },
+                                    onClick = {
+                                        viewModel.removeAllImages()
+                                        showMenu = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = if (isSelectionMode) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent
                 )
             )
         }
@@ -158,7 +208,7 @@ fun WallpaperApp(viewModel: MainViewModel = viewModel()) {
                     icon = Icons.Default.Refresh,
                     onClick = { viewModel.nextWallpaper() },
                     modifier = Modifier.weight(1f),
-                    enabled = imageUris.isNotEmpty(),
+                    enabled = imageUris.isNotEmpty() && !isSelectionMode,
                     containerColor = MaterialTheme.colorScheme.secondaryContainer,
                     contentColor = MaterialTheme.colorScheme.onSecondaryContainer
                 )
@@ -194,12 +244,32 @@ fun WallpaperApp(viewModel: MainViewModel = viewModel()) {
                             }
                         }
                         Spacer(modifier = Modifier.width(16.dp))
-                        Text(
-                            "Automatic Cycle",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.weight(1f)
-                        )
+                        Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "Automatic Cycle",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            var showHelp by remember { mutableStateOf(false) }
+                            IconButton(onClick = { showHelp = true }, modifier = Modifier.size(32.dp)) {
+                                Icon(
+                                    Icons.Default.Info, 
+                                    contentDescription = "Help", 
+                                    modifier = Modifier.size(18.dp),
+                                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+                                )
+                            }
+                            if (showHelp) {
+                                AlertDialog(
+                                    onDismissRequest = { showHelp = false },
+                                    title = { Text("Automatic Cycle") },
+                                    text = { Text("This is the main magic switch! Turn it on to have your wallpaper automatically cycle through your gallery.") },
+                                    confirmButton = {
+                                        TextButton(onClick = { showHelp = false }) { Text("Got it") }
+                                    }
+                                )
+                            }
+                        }
                         Switch(
                             checked = isSlideshowEnabled,
                             onCheckedChange = { viewModel.toggleSlideshow(it) },
@@ -294,6 +364,9 @@ fun WallpaperApp(viewModel: MainViewModel = viewModel()) {
             if (imageUris.isEmpty()) {
                 EmptyState()
             } else {
+                val gridState = rememberLazyGridState()
+                var dragStartIndex by remember { mutableStateOf<Int?>(null) }
+                
                 AnimatedVisibility(
                     visible = true,
                     enter = fadeIn() + slideInVertically(
@@ -301,56 +374,118 @@ fun WallpaperApp(viewModel: MainViewModel = viewModel()) {
                         animationSpec = spring(dampingRatio = 0.8f)
                     )
                 ) {
-                LazyVerticalGrid(
-                    columns = GridCells.Fixed(3),
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(bottom = 32.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    itemsIndexed(imageUris) { index, uri ->
-                        val isCurrent = index == currentIndex
-                        Box(
-                            modifier = Modifier
-                                .aspectRatio(1f)
-                                .clip(RoundedCornerShape(16.dp))
-                                .then(
-                                    if (isCurrent) Modifier.background(
-                                        MaterialTheme.colorScheme.primary,
-                                        RoundedCornerShape(16.dp)
-                                    ).padding(3.dp)
-                                    else Modifier
+                    LazyVerticalGrid(
+                        state = gridState,
+                        columns = GridCells.Fixed(3),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .pointerInput(imageUris) {
+                                detectDragGesturesAfterLongPress(
+                                    onDragStart = { offset ->
+                                        gridState.layoutInfo.visibleItemsInfo
+                                            .find { item ->
+                                                offset.y.toInt() in item.offset.y..(item.offset.y + item.size.height) &&
+                                                        offset.x.toInt() in item.offset.x..(item.offset.x + item.size.width)
+                                            }
+                                            ?.let { 
+                                                if (it.index < imageUris.size) {
+                                                    dragStartIndex = it.index
+                                                    initialSelectionDuringDrag = selectedUris
+                                                    selectedUris = selectedUris + imageUris[it.index]
+                                                }
+                                            }
+                                    },
+                                    onDrag = { change, _ ->
+                                        dragStartIndex?.let { start ->
+                                            gridState.layoutInfo.visibleItemsInfo
+                                                .find { item ->
+                                                    change.position.y.toInt() in item.offset.y..(item.offset.y + item.size.height) &&
+                                                            change.position.x.toInt() in item.offset.x..(item.offset.x + item.size.width)
+                                                }
+                                                ?.let { endItem ->
+                                                    val end = endItem.index
+                                                    if (end < imageUris.size) {
+                                                        val range = min(start, end)..max(start, end)
+                                                        val urisInRange = range.map { imageUris[it] }.toSet()
+                                                        selectedUris = initialSelectionDuringDrag + urisInRange
+                                                    }
+                                                }
+                                        }
+                                    },
+                                    onDragEnd = { dragStartIndex = null },
+                                    onDragCancel = { dragStartIndex = null }
                                 )
-                                .clip(RoundedCornerShape(13.dp))
-                        ) {
-                            AsyncImage(
-                                model = uri,
-                                contentDescription = null,
+                            },
+                        contentPadding = PaddingValues(bottom = 32.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        itemsIndexed(imageUris) { index, uri ->
+                            val isCurrent = index == currentIndex
+                            val isSelected = selectedUris.contains(uri)
+                            
+                            Box(
                                 modifier = Modifier
-                                    .fillMaxSize()
-                                    .background(MaterialTheme.colorScheme.surfaceVariant),
-                                contentScale = ContentScale.Crop
-                            )
-                            if (isCurrent) {
-                                Surface(
-                                    color = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier
-                                        .align(Alignment.TopEnd)
-                                        .padding(4.dp)
-                                        .size(20.dp),
-                                    shape = RoundedCornerShape(10.dp)
-                                ) {
-                                    Icon(
-                                        Icons.Default.Refresh,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.onPrimary,
-                                        modifier = Modifier.padding(4.dp)
+                                    .aspectRatio(1f)
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .background(
+                                        if (isSelected) MaterialTheme.colorScheme.primaryContainer
+                                        else if (isCurrent) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
+                                        else Color.Transparent
                                     )
+                                    .combinedClickable(
+                                        onClick = {
+                                            if (isSelectionMode) {
+                                                if (isSelected) selectedUris -= uri else selectedUris += uri
+                                            }
+                                        }
+                                    )
+                                    .padding(if (isSelected || isCurrent) 4.dp else 0.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                            ) {
+                                AsyncImage(
+                                    model = uri,
+                                    contentDescription = null,
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                                    contentScale = ContentScale.Crop
+                                )
+                                
+                                if (isSelected) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            Icons.Default.CheckCircle,
+                                            contentDescription = null,
+                                            tint = Color.White,
+                                            modifier = Modifier.size(32.dp)
+                                        )
+                                    }
+                                } else if (isCurrent) {
+                                    Surface(
+                                        color = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier
+                                            .align(Alignment.TopEnd)
+                                            .padding(4.dp)
+                                            .size(20.dp),
+                                        shape = CircleShape
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Refresh,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.onPrimary,
+                                            modifier = Modifier.padding(4.dp)
+                                        )
+                                    }
                                 }
                             }
                         }
                     }
-                }
                 }
             }
         }

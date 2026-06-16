@@ -24,7 +24,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun onImagesSelected(uris: List<Uri>) {
         viewModelScope.launch {
             val context = getApplication<Application>()
-            val uriStrings = uris.map { uri ->
+            val newUriStrings = uris.map { uri ->
                 try {
                     context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 } catch (e: Exception) {
@@ -32,8 +32,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 uri.toString()
             }
-            dataStoreManager.saveImageUris(uriStrings)
+            val currentUris = imageUris.value.toMutableList()
+            currentUris.addAll(newUriStrings)
+            dataStoreManager.saveImageUris(currentUris.distinct())
+        }
+    }
+
+    fun removeImages(urisToRemove: List<String>) {
+        viewModelScope.launch {
+            val currentUris = imageUris.value.toMutableList()
+            currentUris.removeAll(urisToRemove)
+            dataStoreManager.saveImageUris(currentUris)
+            
+            // Adjust current index if needed
+            val currentIndexVal = currentIndex.value
+            if (currentIndexVal >= currentUris.size && currentUris.isNotEmpty()) {
+                dataStoreManager.updateIndex(0)
+            }
+        }
+    }
+
+    fun removeAllImages() {
+        viewModelScope.launch {
+            dataStoreManager.saveImageUris(emptyList())
             dataStoreManager.updateIndex(0)
+            toggleSlideshow(false)
         }
     }
 
