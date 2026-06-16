@@ -8,8 +8,11 @@ import androidx.lifecycle.viewModelScope
 import josh.griff.joshsslideshowwallpaper.data.DataStoreManager
 import josh.griff.joshsslideshowwallpaper.util.WallpaperHelper
 import josh.griff.joshsslideshowwallpaper.worker.WallpaperWorker
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -20,6 +23,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val intervalMinutes = dataStoreManager.intervalMinutes.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 60)
     val isRandom = dataStoreManager.isRandom.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
     val isSlideshowEnabled = dataStoreManager.isSlideshowEnabled.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    private val _isUpdatingWallpaper = MutableStateFlow(false)
+    val isUpdatingWallpaper = _isUpdatingWallpaper.asStateFlow()
 
     fun onImagesSelected(uris: List<Uri>) {
         viewModelScope.launch {
@@ -61,10 +67,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun nextWallpaper() {
-        viewModelScope.launch {
-            val uris = imageUris.value
-            if (uris.isEmpty()) return@launch
+        val uris = imageUris.value
+        if (uris.isEmpty()) return
 
+        _isUpdatingWallpaper.value = true
+        viewModelScope.launch {
             val index = currentIndex.value
             val random = isRandom.value
             
@@ -74,10 +81,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 (index + 1) % uris.size
             }
 
-            val success = WallpaperHelper.setWallpaperFromUri(getApplication(), uris[nextIndex])
+            val success = withContext(Dispatchers.IO) {
+                WallpaperHelper.setWallpaperFromUri(getApplication(), uris[nextIndex])
+            }
+
             if (success) {
                 dataStoreManager.updateIndex(nextIndex)
             }
+            
+            // Add a tiny delay so the "Updating" state is actually perceptible
+            delay(500)
+            _isUpdatingWallpaper.value = false
         }
     }
 
